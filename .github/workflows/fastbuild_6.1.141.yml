@@ -480,6 +480,16 @@ jobs:
             wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/ntsync_compat_${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
             patch -p1 -F 3 < ntsync_base.patch || true
             patch -p1 -F 3 < ntsync_compat_${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            # 修复 cgroup 资源限制的 kABI 问题（CFS_BANDWIDTH / CGROUP_PIDS）
+            # 该补丁把 CPU 带宽状态从 KMI 可见的 struct cfs_rq / struct task_group
+            # 移到独立分配的私有结构体，并把 pids 控制器放到 cgroup/css_set 的尾部
+            # 私有存储中，使这两个配置开启后不会改变任何导出符号的 CRC 与结构体布局，
+            # 厂商预编译模块（vendor_dlkm/system_dlkm）可正常加载。
+            # 来源：Goldzxcbug/Droidspaces_Kernel_patch/cgroup_limits
+            # 优先使用本仓库内已提交的补丁，缺失时回退到上游原始地址
+            wget -q https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/droidspaces_patch/fix_cgroup_limits_kabi_${{ env.KERNEL_VERSION }}.${{ env.SUB_VERSION }}.patch \
+              || wget https://github.com/Goldzxcbug/Droidspaces_Kernel_patch/raw/refs/heads/main/cgroup_limits/fix_cgroup_limits_kabi_${{ env.KERNEL_VERSION }}.${{ env.SUB_VERSION }}.patch
+            patch -p1 -F 3 < fix_cgroup_limits_kabi_${{ env.KERNEL_VERSION }}.${{ env.SUB_VERSION }}.patch
             # 开启 Droidspaces 容器所需内核支持
             echo "CONFIG_PID_NS=y" >> ./arch/arm64/configs/gki_defconfig
             echo "CONFIG_IPC_NS=y" >> ./arch/arm64/configs/gki_defconfig
@@ -491,9 +501,16 @@ jobs:
             echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./arch/arm64/configs/gki_defconfig
             echo "CONFIG_NETFILTER_XT_TARGET_LOG=y" >> ./arch/arm64/configs/gki_defconfig
             echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y" >> ./arch/arm64/configs/gki_defconfig
+            # Macvlan 模式（--net=macvlan）：驱动自包含，不改变任何共享结构体，kABI 安全
+            echo "CONFIG_MACVLAN=y" >> ./arch/arm64/configs/gki_defconfig
+            # 进程数限制（--pids-limit）：配合上面的 fix_cgroup_limits 补丁，
+            # pids 子系统使用冻结 KMI 之外的私有存储，kABI 安全
+            echo "CONFIG_CGROUP_PIDS=y" >> ./arch/arm64/configs/gki_defconfig
+            # CPU 带宽限制（--cpus）：配合上面的 fix_cgroup_limits 补丁，
+            # 带宽状态已移出 struct cfs_rq / struct task_group，开启后不改变 ABI
+            echo "CONFIG_CFS_BANDWIDTH=y" >> ./arch/arm64/configs/gki_defconfig
             # 未经测试的配置选项，可能导致bug
             #echo "CONFIG_CGROUP_DEVICE=y" >> ./arch/arm64/configs/gki_defconfig
-            #echo "CONFIG_CGROUP_PIDS=y" >> ./arch/arm64/configs/gki_defconfig
             #echo "CONFIG_FW_LOADER_COMPRESS=y" >> ./arch/arm64/configs/gki_defconfig
             #echo "CONFIG_BRIDGE_NETFILTER=y" >> ./arch/arm64/configs/gki_defconfig
             #echo "CONFIG_NF_TABLES=y" >> ./arch/arm64/configs/gki_defconfig
